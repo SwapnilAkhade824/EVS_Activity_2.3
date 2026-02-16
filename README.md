@@ -1,10 +1,5 @@
 # Activity 3: Air & Noise Pollution Monitoring – Compliance Analytics Dashboard
 
-**Student Name:** Swapnil Akhade  
-**Roll No:** [Insert Roll No]  
-**Subject:** Environmental Science (EVS)  
-**Date:** [Insert Date]
-
 ---
 
 ## 1. Objective

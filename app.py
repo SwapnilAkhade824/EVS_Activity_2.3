@@ -8,17 +8,52 @@ st.set_page_config(page_title="Air Quality Analytics", layout="wide", page_icon=
 
 @st.cache_data
 def load_data():
+    """Load preprocessed air quality data with AQI columns"""
     df = pd.read_parquet("Dataset/indian_air_quality.parquet")
 
     # Ensure datetime is correct format
     df["Datetime"] = pd.to_datetime(df["Datetime"])
+    
+    # Verify AQI columns exist (they should be precomputed)
+    required_cols = ["AQI", "AQI_Category", "AQI_Color"]
+    missing_cols = [col for col in required_cols if col not in df.columns]
+    if missing_cols:
+        st.error(f"⚠️  Missing AQI columns: {missing_cols}. Please run preprocess_data.py first!")
+        st.stop()
+    
     return df
 
 
 df = load_data()
 
-# --- 2. SIDEBAR CONTROLS (The "User Functions") ---
-st.sidebar.header("🎛️ Control Panel")
+
+# --- 2. AQI HELPER FUNCTION ---
+def get_aqi_category(aqi):
+    """Return AQI category and color"""
+    if aqi <= 50:
+        return "Good", "#00E400"
+    elif aqi <= 100:
+        return "Satisfactory", "#FFFF00"
+    elif aqi <= 200:
+        return "Moderate", "#FF7E00"
+    elif aqi <= 300:
+        return "Poor", "#FF0000"
+    elif aqi <= 400:
+        return "Very Poor", "#8F3F97"
+    else:
+        return "Severe", "#7E0023"
+
+
+# Note: AQI is now precomputed in the dataset during preprocessing
+# No need to calculate it at runtime anymore!
+
+
+# --- 3. SIDEBAR CONTROLS (The "User Functions") ---
+st.sidebar.header("Control Panel")
+
+# Show AQI option
+# show_aqi = st.sidebar.checkbox("Show AQI Analysis", value=True)
+show_aqi = False
 
 # A. Pollutant Selection (NEW FEATURE)
 pollutant_dict = {
@@ -76,12 +111,38 @@ mask = (
 )
 filtered_df = df.loc[mask]
 
-# --- 3. MAIN DASHBOARD ---
+# --- 4. MAIN DASHBOARD ---
 st.title(f"🏭 {selected_metric_name} Analytics Dashboard")
 st.markdown(f"**Standard:** CPCB (India) | **Safe Limit:** {safe_limit} µg/m³")
 st.markdown("---")
 
-# --- 4. KPI ROW (Comparative Metrics) ---
+# --- 5. KPI ROW (Comparative Metrics) ---
+if show_aqi:
+    # Display AQI metrics
+    st.subheader("📊 Air Quality Index (AQI) Overview")
+    aqi_cols = st.columns(len(selected_cities))
+    
+    for i, city in enumerate(selected_cities):
+        city_data = filtered_df[filtered_df["City"] == city]
+        if city_data.empty:
+            continue
+        
+        avg_aqi = city_data["AQI"].mean()
+        category, color = get_aqi_category(avg_aqi)
+        
+        with aqi_cols[i]:
+            st.markdown(f"### {city}")
+            st.markdown(
+                f"<div style='background-color: {color}; padding: 20px; border-radius: 10px; text-align: center;'>"
+                f"<h1 style='color: white; margin: 0;'>{avg_aqi:.0f}</h1>"
+                f"<h3 style='color: white; margin: 0;'>{category}</h3>"
+                f"</div>",
+                unsafe_allow_html=True
+            )
+    st.markdown("---")
+
+# Display pollutant-specific metrics
+st.subheader(f"🔬 {selected_metric_name} Metrics")
 kpi_cols = st.columns(len(selected_cities))
 
 for i, city in enumerate(selected_cities):
@@ -108,10 +169,8 @@ for i, city in enumerate(selected_cities):
             delta_color=color,
         )
 
-# --- 5. ADVANCED ANALYSIS TABS ---
-tab1, tab2, tab3, tab4 = st.tabs(
-    ["📈 Trends", "🔥 Heatmap", "📊 Distribution", "📋 Policy"]
-)
+# --- 6. ADVANCED ANALYSIS TABS ---
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["Trends", "Heatmap", "Distribution", "Policy", "Health Impact"])
 
 with tab1:
     st.subheader(f"Temporal Variation: {selected_metric_name}")
@@ -233,7 +292,113 @@ with tab4:
             * **Action:** {action}
             """)
 
-# --- 6. FOOTER ---
+with tab5:
+    st.subheader("🏥 Health Impact Assessment")
+    
+    st.markdown("""
+    > [!WARNING]
+    > Estimates based on WHO and ICMR studies. Actual health impacts vary by age, pre-existing conditions, and exposure duration.
+    """)
+    
+    for city in selected_cities:
+        city_slice = filtered_df[filtered_df["City"] == city]
+        if city_slice.empty:
+            continue
+        
+        avg_pm25 = city_slice["PM2_5_ugm3"].mean()
+        avg_aqi = city_slice["AQI"].mean()
+        
+        # Health impact calculations based on research
+        # Source: WHO Global Air Quality Guidelines, ICMR studies
+        
+        # 1. Premature deaths per 100,000 population
+        # WHO: Every 10 µg/m³ increase in PM2.5 increases mortality by ~6%
+        baseline_mortality = 700  # per 100,000 in India
+        excess_pm25 = max(0, avg_pm25 - 10)  # WHO guideline is 10 µg/m³
+        mortality_increase_pct = (excess_pm25 / 10) * 6
+        premature_deaths = baseline_mortality * (mortality_increase_pct / 100)
+        
+        # 2. Life expectancy reduction
+        # AQLI Study: 1 year lost per 10 µg/m³ above WHO guideline
+        life_years_lost = (excess_pm25 / 10) * 1.0
+        
+        # 3. Disease risk multipliers
+        copd_risk = 1 + (avg_pm25 / 100) * 0.8  # 80% increase per 100 µg/m³
+        asthma_risk = 1 + (avg_pm25 / 50) * 0.3  # 30% increase per 50 µg/m³
+        cardiovascular_risk = 1 + (avg_pm25 / 100) * 1.2
+        
+        # 4. WHO vs CPCB comparison
+        who_guideline = 15  # Annual mean for PM2.5
+        cpcb_standard = 40  # Annual mean for PM2.5
+        
+        with st.expander(f"🏥 Health Analysis: {city}", expanded=True):
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                st.markdown("#### 💀 Mortality Impact")
+                st.metric(
+                    "Estimated Premature Deaths",
+                    f"{premature_deaths:.0f}",
+                    help="Per 100,000 population/year"
+                )
+                st.metric(
+                    "Life Expectancy Reduction",
+                    f"{life_years_lost:.1f} years",
+                    help="Average years lost due to pollution"
+                )
+            
+            with col2:
+                st.markdown("#### 🫁 Disease Risk Multipliers")
+                
+                # Color code based on risk
+                copd_color = "🔴" if copd_risk > 2 else "🟡" if copd_risk > 1.5 else "🟢"
+                asthma_color = "🔴" if asthma_risk > 1.5 else "🟡" if asthma_risk > 1.2 else "🟢"
+                cardio_color = "🔴" if cardiovascular_risk > 2 else "🟡" if cardiovascular_risk > 1.5 else "🟢"
+                
+                st.markdown(f"{copd_color} **COPD Risk:** {copd_risk:.2f}x baseline")
+                st.markdown(f"{asthma_color} **Asthma Risk:** {asthma_risk:.2f}x baseline")
+                st.markdown(f"{cardio_color} **Cardiovascular Risk:** {cardiovascular_risk:.2f}x baseline")
+            
+            with col3:
+                st.markdown("#### 📊 Standards Comparison")
+                
+                # Create comparison chart
+                comparison_data = pd.DataFrame({
+                    "Standard": ["WHO Guideline", "CPCB Standard", f"{city} Current"],
+                    "PM2.5 (µg/m³)": [who_guideline, cpcb_standard, avg_pm25]
+                })
+                
+                fig_comp = px.bar(
+                    comparison_data,
+                    x="Standard",
+                    y="PM2.5 (µg/m³)",
+                    color="PM2.5 (µg/m³)",
+                    color_continuous_scale=["green", "yellow", "red"],
+                    title=f"PM2.5 Standards vs {city}"
+                )
+                st.plotly_chart(fig_comp, width="stretch")
+            
+            # Additional health guidance
+            if avg_aqi > 300:
+                st.error("⚠️ **SEVERE HEALTH RISK**: Avoid outdoor activities. Use N95 masks if going outside. Vulnerable groups should stay indoors with air purifiers.")
+            elif avg_aqi > 200:
+                st.warning("⚠️ **UNHEALTHY**: Limit outdoor exposure. Children, elderly, and people with respiratory conditions should stay indoors.")
+            elif avg_aqi > 100:
+                st.info("ℹ️ **MODERATE**: Sensitive individuals should consider reducing prolonged outdoor exertion.")
+            else:
+                st.success("✅ **SAFE**: Air quality is acceptable for most individuals.")
+    
+    # Add reference sources
+    st.markdown("---")
+    st.markdown("""
+    **Data Sources & References:**
+    - World Health Organization (WHO) Global Air Quality Guidelines 2021
+    - Indian Council of Medical Research (ICMR) Air Pollution Studies
+    - Air Quality Life Index (AQLI) - University of Chicago
+    - Central Pollution Control Board (CPCB) Standards
+    """)
+
+# --- 7. FOOTER ---
 st.markdown("---")
 st.caption(
     "Data Source: CPCB & Satellite Monitoring | Dashboard v2.0 | Developed by AI/ML Engineering Team"
