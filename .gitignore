@@ -8,3 +8,7 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Requirements
+uv.lock
+pyproject.toml
